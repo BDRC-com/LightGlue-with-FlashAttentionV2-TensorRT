@@ -1,90 +1,99 @@
-cmake_minimum_required(VERSION 3.5.0)
-project(lightglue_attention_plugin LANGUAGES CXX)   # CUDA)
+cmake_minimum_required(VERSION 3.18)
+
+if(NOT DEFINED CMAKE_CUDA_COMPILER AND EXISTS "/usr/local/cuda/bin/nvcc")
+    set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc" CACHE FILEPATH "CUDA compiler")
+endif()
+
+project(lightglue_attention_plugin LANGUAGES CXX CUDA)
+
+string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" LIGHTGLUE_SYSTEM_PROCESSOR)
+set(LIGHTGLUE_DEFAULT_CUDA_ARCHITECTURES 86)
+if(LIGHTGLUE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+    set(LIGHTGLUE_DEFAULT_CUDA_ARCHITECTURES 87)
+endif()
+
+if(LIGHTGLUE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "" OR
+       CMAKE_CUDA_ARCHITECTURES STREQUAL "52")
+        set(CMAKE_CUDA_ARCHITECTURES 87 CACHE STRING "CUDA architectures" FORCE)
+        message(STATUS "Jetson target detected; defaulting CMAKE_CUDA_ARCHITECTURES to 87 for Orin NX")
+    elseif(NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "87")
+        message(WARNING "Detected aarch64/Jetson but CMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}. For Orin NX use -DCMAKE_CUDA_ARCHITECTURES=87, or remove the build directory and reconfigure.")
+    endif()
+elseif(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "")
+    set(CMAKE_CUDA_ARCHITECTURES ${LIGHTGLUE_DEFAULT_CUDA_ARCHITECTURES} CACHE STRING "CUDA architectures")
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_BUILD_TYPE "Release")
-set(CMAKE_CXX_FLAGS "-std=c++17")
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -g")
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
-set(CUDA)
-set(CMAKE_CUDA_COMPILER /usr/local/cuda/bin/nvcc)
-set(CMAKE_CUDA_ARCHITECTURES 87)
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -g")
 set(CMAKE_CUDA_FLAGS_RELEASE "-O3 -DNDEBUG -w --use_fast_math")
 
-if(POLICY CMP0146) 
-    cmake_policy(SET CMP0146 OLD) 
-endif()
-if(NOT CUDA_INCLUDE_DIRS)
-    find_package(CUDA REQUIRED)
-endif()
-message(STATUS "CUDA_LIBRARIES        : ${CUDA_LIBRARIES}")
-message(STATUS "CUDA_cublas_LIBRARY   : ${CUDA_cublas_LIBRARY}")
-message(STATUS "CUDA_cusolver_LIBRARY : ${CUDA_cusolver_LIBRARY}")
-message(STATUS "CUDA_INCLUDE_DIRS     : ${CUDA_INCLUDE_DIRS}")
-message(STATUS "CUDA_CUDART_LIBRARY   : ${CUDA_CUDART_LIBRARY}")
-
-# Find dependencies
-# To get LIBTORCH_DIR in python3 console : 
-# >> import torch 
-# >> print(torch.utils.cmake_prefix_path)
-set(LIBTORCH_DIR "/usr/local/lib/python3.8/dist-packages/torch/share/cmake")
-# set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH};${LIBTORCH_DIR}")
-list(APPEND CMAKE_PREFIX_PATH "${LIBTORCH_DIR}")
-find_package(Torch REQUIRED)
-set(TORCH_PYTHON_LIBRARY "/usr/local/lib/python3.8/dist-packages/torch/lib/libtorch_python.so")
-message(STATUS "CMAKE_PREFIX_PATH    : ${CMAKE_PREFIX_PATH}")
-message(STATUS "TORCH_LIBRARIES      : ${TORCH_LIBRARIES}")
-message(STATUS "TORCH_PYTHON_LIBRARY : ${TORCH_PYTHON_LIBRARY}")
-message(STATUS "TORCH_INCLUDE_DIRS   : ${TORCH_INCLUDE_DIRS}")
-
-# set(CUTLASS_DIRS "../third_party/cutlass-v3.4.1/include")
-# message(STATUS "CUTLASS_DIRS   : ${CUTLASS_DIRS}")
+find_package(CUDAToolkit REQUIRED)
 
 get_filename_component(CUTLASS_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/cutlass-v3.4.1/include" ABSOLUTE)
-message(STATUS "CUTLASS_DIRS : ${CUTLASS_DIRS}")
 
-set(
-    TRT_INCLUDE_DIRS
-    "/usr/local/cuda/include/"
+set(TENSORRT_LIB_HINTS
+    /usr/lib/x86_64-linux-gnu
+    /usr/lib/aarch64-linux-gnu
+    /usr/lib/aarch-linux-gnu
+    /usr/local/lib
 )
-# set(
-#     TRT_LIBRARIES 
-#     "/usr/lib/aarch-linux-gnu/libnvinfer.so"
-#     "/usr/lib/aarch-linux-gnu/libnvinfer_plugin.so"
-#     "/usr/lib/aarch-linux-gnu/libnvonnxparser.so"
-#     "/usr/lib/aarch-linux-gnu/libnvparsers.so"
-# )   # maybe more
 
-# for tensorrt libs
-link_directories(/usr/lib/aarch-linux-gnu/)
-
-include_directories(
-    ${CUDA_INCLUDE_DIRS}
-    ${TORCH_INCLUDE_DIRS}
-    ${CUTLASS_DIRS}
-    ${TRT_INCLUDE_DIRS}
+set(TENSORRT_INCLUDE_HINTS
+    /usr/include/x86_64-linux-gnu
+    /usr/include/aarch64-linux-gnu
+    /usr/include
+    /usr/local/cuda/include
 )
+
+find_path(TENSORRT_INCLUDE_DIR NvInfer.h HINTS ${TENSORRT_INCLUDE_HINTS})
+find_library(TENSORRT_NVINFER_LIB nvinfer HINTS ${TENSORRT_LIB_HINTS})
+find_library(TENSORRT_NVINFER_PLUGIN_LIB nvinfer_plugin HINTS ${TENSORRT_LIB_HINTS})
+
+if(NOT TENSORRT_INCLUDE_DIR OR NOT TENSORRT_NVINFER_LIB OR NOT TENSORRT_NVINFER_PLUGIN_LIB)
+    message(FATAL_ERROR "TensorRT headers or libraries not found. Set TENSORRT_INCLUDE_DIR/TENSORRT_NVINFER_LIB/TENSORRT_NVINFER_PLUGIN_LIB if needed.")
+endif()
+
+message(STATUS "CMAKE_SYSTEM_PROCESSOR      : ${CMAKE_SYSTEM_PROCESSOR}")
+message(STATUS "CMAKE_CUDA_ARCHITECTURES    : ${CMAKE_CUDA_ARCHITECTURES}")
+message(STATUS "CUDAToolkit_INCLUDE_DIRS    : ${CUDAToolkit_INCLUDE_DIRS}")
+message(STATUS "CUTLASS_DIRS                : ${CUTLASS_DIRS}")
+message(STATUS "TENSORRT_INCLUDE_DIR        : ${TENSORRT_INCLUDE_DIR}")
+message(STATUS "TENSORRT_NVINFER_LIB        : ${TENSORRT_NVINFER_LIB}")
+message(STATUS "TENSORRT_NVINFER_PLUGIN_LIB : ${TENSORRT_NVINFER_PLUGIN_LIB}")
 
 add_library(
-    lightglue_attention_plugin 
-    SHARED 
-    attention_headdim_64_fp16in_fp16out.cu 
-    attention_headdim_64_fp16in_fp32out.cu 
+    lightglue_attention_plugin
+    SHARED
+    attention_headdim_64_fp16in_fp16out.cu
+    attention_headdim_64_fp16in_fp32out.cu
     lightglue_attention_plugin.cpp
     common/checkMacrosPlugin.cpp
 )
-target_link_libraries(
-    lightglue_attention_plugin 
-    PUBLIC 
-    # ${TORCH_LIBRARIES} 
-    # ${TORCH_PYTHON_LIBRARY} 
-    ${CUDA_LIBRARIES} 
-    ${CUDA_cublas_LIBRARY} 
-    ${CUDA_cusolver_LIBRARY}
-    # ${TRT_LIBRARIES}
-    nvinfer
-    nvinfer_plugin
-    # nvonnxparser
-    # nvparsers
+
+target_include_directories(
+    lightglue_attention_plugin
+    PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+    ${CUTLASS_DIRS}
+    ${TENSORRT_INCLUDE_DIR}
 )
+
+target_link_libraries(
+    lightglue_attention_plugin
+    PRIVATE
+    CUDA::cudart
+    CUDA::cublas
+    CUDA::cusolver
+    ${TENSORRT_NVINFER_LIB}
+    ${TENSORRT_NVINFER_PLUGIN_LIB}
+)
+
 set_target_properties(lightglue_attention_plugin PROPERTIES CUDA_SEPARABLE_COMPILATION ON)

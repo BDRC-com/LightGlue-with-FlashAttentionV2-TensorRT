@@ -67,8 +67,6 @@ build mono superpoint trt engine
 --optShapes=image:1x1x480x640 
 --maxShapes=image:1x1x480x640 
 --fp16 
---precisionConstraints=obey 
---layerPrecisions=*:fp16 
 --useCudaGraph 
 --verbose 
 --warmUp=1000 
@@ -78,8 +76,9 @@ build mono superpoint trt engine
 
 --exportOutput=./trt_engine_files/superpoint.mono.480x640.fp16.noDLA.engine.json 
 
-scores正常
-descriptors全零
+不要给 superpoint descriptor 分支强行加 --precisionConstraints=obey / --layerPrecisions=*:fp16
+该组合会让 scores 正常但 descriptors 全零
+FP16 extractor 保持混合精度，让 TensorRT 自己选择层精度
 
 /usr/src/tensorrt/bin/trtexec 
 --onnx=./onnx_files/superpoint.onnx 
@@ -119,8 +118,6 @@ build stereo superpoint trt engine
 --optShapes=image:2x1x480x640 
 --maxShapes=image:2x1x480x640 
 --fp16 
---precisionConstraints=obey 
---layerPrecisions=*:fp16 
 --useCudaGraph 
 --verbose 
 --warmUp=1000 
@@ -153,8 +150,6 @@ build lightglue trt engine with plugin
 --optShapes=keypoints_0:1x1024x2,keypoints_1:1x1024x2,descriptors_0:1x1024x256,descriptors_1:1x1024x256 
 --maxShapes=keypoints_0:1x1024x2,keypoints_1:1x1024x2,descriptors_0:1x1024x256,descriptors_1:1x1024x256 
 --fp16 
---precisionConstraints=obey 
---layerPrecisions=*:fp16 
 --useCudaGraph 
 --verbose 
 --plugins=./lightglue_attention_plugin/build/liblightglue_attention_plugin.so 
@@ -202,14 +197,26 @@ build lightglue trt engine no plugin
 --optShapes=keypoints_0:1x1024x2,keypoints_1:1x1024x2,descriptors_0:1x1024x256,descriptors_1:1x1024x256 
 --maxShapes=keypoints_0:1x1024x2,keypoints_1:1x1024x2,descriptors_0:1x1024x256,descriptors_1:1x1024x256 
 --fp16 
---precisionConstraints=obey 
---layerPrecisions=*:fp16 
 --useCudaGraph 
 --verbose 
 --warmUp=1000 
 --iterations=100 
 --duration=100 
 > ./trt_engine_files/lightglue_for_superpoint_no_plugin.1_1024_1024.fp16.noDLA.engine.txt
+
+----------
+
+reusable superpoint trt engine script
+
+./scripts/build_superpoint_trt_engine.sh \
+	--mode fp16 \
+	--batch 1 \
+	--height 480 \
+	--width 752 \
+	--tag x86_64.trt10 \
+	--onnx ./onnx_files/superpoint.onnx
+
+默认 fp16 只加 --fp16，不再强制所有层都跑 fp16
 
 /usr/src/tensorrt/bin/trtexec 
 --onnx=./onnx_files/lightglue_for_superpoint_no_plugin.onnx 
