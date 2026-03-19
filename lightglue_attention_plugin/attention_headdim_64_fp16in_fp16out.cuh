@@ -8,8 +8,6 @@
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 
-#include <torch/torch.h>
-
 #include "./data_types.h"
 
 namespace AttentionHeadDim64 {
