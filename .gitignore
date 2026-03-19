@@ -10,4 +10,7 @@ matches_demo_mono_1
 lightglue_attention_plugin/backup
 lightglue_attention_plugin/backup_0
 lightglue_attention_plugin/backup_2
+COLCON_IGNORE
+trt_engine_files/*.x86_64.trt10*.engine
+trt_engine_files/*.x86_64.trt10*.engine.txt
 
