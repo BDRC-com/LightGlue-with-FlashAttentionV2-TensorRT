@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-TRTEXEC_BIN="${TRTEXEC_BIN:-/usr/src/tensorrt/bin/trtexec}"
+TRTEXEC_BIN="${TRTEXEC_BIN:-/usr/bin/trtexec}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 onnx_path="${ROOT_DIR}/onnx_files/superpoint.onnx"
@@ -17,6 +17,29 @@ warmup=200
 iterations=50
 duration=30
 verbose=0
+use_shapes=0
+
+remove_path_entry() {
+  local target="$1"
+  local current_value="${LD_LIBRARY_PATH:-}"
+  local updated_value=""
+  local old_ifs="$IFS"
+
+  IFS=':'
+  for entry in $current_value; do
+    if [[ -z "$entry" || "$entry" == "$target" ]]; then
+      continue
+    fi
+    if [[ -n "$updated_value" ]]; then
+      updated_value+="":"$entry"
+    else
+      updated_value="$entry"
+    fi
+  done
+  IFS="$old_ifs"
+
+  export LD_LIBRARY_PATH="$updated_value"
+}
 
 usage() {
   cat <<'EOF'
@@ -33,6 +56,7 @@ Options:
   --warmup N            trtexec warmUp iterations.
   --iterations N        trtexec iterations.
   --duration N          trtexec duration in seconds.
+  --with-shapes         Pass min/opt/max shape profiles to trtexec.
   --verbose             Enable trtexec verbose log.
   --no-cuda-graph       Disable --useCudaGraph.
   -h, --help            Show this help.
@@ -40,6 +64,7 @@ Options:
 Notes:
   fp16 mode intentionally uses only --fp16.
   Do not add --precisionConstraints=obey or --layerPrecisions=*:fp16 for SuperPoint.
+  Static ONNX models should typically omit shape profiles; use --with-shapes only for dynamic-shape exports.
 EOF
 }
 
@@ -85,6 +110,10 @@ while [[ $# -gt 0 ]]; do
       duration="$2"
       shift 2
       ;;
+    --with-shapes)
+      use_shapes=1
+      shift
+      ;;
     --verbose)
       verbose=1
       shift
@@ -107,6 +136,11 @@ done
 
 if [[ ! -f "$onnx_path" ]]; then
   echo "ONNX file not found: $onnx_path" >&2
+  exit 1
+fi
+
+if [[ ! -x "$TRTEXEC_BIN" ]]; then
+  echo "trtexec not found or not executable: $TRTEXEC_BIN" >&2
   exit 1
 fi
 
@@ -133,17 +167,26 @@ engine_path="${engine_dir}/superpoint.${layout}.${height}x${width}.${mode}.${tag
 log_path="${engine_path}.txt"
 shape="image:${batch}x1x${height}x${width}"
 
+# Avoid stale local TensorRT runtimes under /usr/local/cuda overshadowing the apt-managed 10.16.1 libraries.
+remove_path_entry "/usr/local/cuda/lib64"
+remove_path_entry "/usr/local/cuda/targets/x86_64-linux/lib"
+
 cmd=(
   "$TRTEXEC_BIN"
   "--onnx=${onnx_path}"
   "--saveEngine=${engine_path}"
-  "--minShapes=${shape}"
-  "--optShapes=${shape}"
-  "--maxShapes=${shape}"
   "--warmUp=${warmup}"
   "--iterations=${iterations}"
   "--duration=${duration}"
 )
+
+if [[ "$use_shapes" -eq 1 ]]; then
+  cmd+=(
+    "--minShapes=${shape}"
+    "--optShapes=${shape}"
+    "--maxShapes=${shape}"
+  )
+fi
 
 if [[ "$use_cuda_graph" -eq 1 ]]; then
   cmd+=("--useCudaGraph")
@@ -163,6 +206,7 @@ case "$mode" in
 esac
 
 echo "Building ${engine_path}"
+echo "Using trtexec: $(readlink -f "$TRTEXEC_BIN")"
 printf '%q ' "${cmd[@]}"
 echo
 
